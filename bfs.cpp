@@ -4,14 +4,16 @@
 #include <vector>
 #include <queue>
 #include <unordered_map>
+#include <unordered_set>
 #include <omp.h>
+#include <cmath>
 #include <set>
 
 // using namespace std;
 
 #define START_NODE 2
 
-std::vector<std::string> file_name = {"test","web-Stanford", "soc-LiveJournal1", "roadNet-CA"}; 
+std::vector<std::string> file_name = {"test","web-Stanford", "soc-LiveJournal1", "roadNet-CA", "com-orkut"}; 
 auto num_files = file_name.size();
 bool is_parallel = false;
 
@@ -25,7 +27,9 @@ Graph readGraph(const std::string &filename, Graph& graph, unsigned long long& m
     unsigned long long from, to;
     while (file >> from >> to) {
         graph[from].push_back(to);
+        graph[to].push_back(from);
         max_node = std::max(max_node, from);
+        max_node = std::max(max_node, to);
     }
     return graph;
 }
@@ -51,6 +55,14 @@ void bfs(const Graph &graph, unsigned long long &edges,unsigned long long &max_n
                     visited[neighbor] = 1;
                 }
             }
+            // print queue
+            // std::queue<unsigned long long> tmp = q;
+            // while(!tmp.empty())
+            // {
+            //     std::cout << tmp.front() << " ";
+            //     tmp.pop();
+            // }
+            // std::cout << "\n";
         }        
     }
     else
@@ -60,26 +72,37 @@ void bfs(const Graph &graph, unsigned long long &edges,unsigned long long &max_n
         frontier.push_back(start);
         visited[start] = 1;
         while (!frontier.empty()) {
-            std::vector<unsigned long long> next_frontier;
+            // std::vector<unsigned long long> next_frontier;
+            std::unordered_set<unsigned long long> next_frontier;
             result.insert(result.end(), frontier.begin(), frontier.end());
-            #pragma omp parallel for reduction(+:edges)
-            for(auto i = 0; i < frontier.size(); i++) {
-                unsigned long long node = frontier[i];
-                if(graph.find(node) == graph.end()) continue; // 有些节点没有出度
-                for (unsigned long long neighbor : graph.at(node)) {
-                    edges++;
-                    if (!visited[neighbor]) {
-                        #pragma omp critical
+
+            #pragma omp parallel
+            {
+                std::vector<unsigned long long> next_frontier_private;
+                #pragma omp for reduction(+:edges) nowait
+                for(auto i = 0; i < frontier.size(); i++) 
+                {
+                    unsigned long long node = frontier[i];
+                    if(graph.find(node) == graph.end()) continue; // 有些节点没有出度
+                    for (unsigned long long neighbor : graph.at(node)) 
+                    {
+                        edges++;
+                        if (!visited[neighbor])
                         {
-                            next_frontier.push_back(neighbor);
-                            visited[neighbor] = 1;
+                            next_frontier_private.push_back(neighbor);
+                            visited[neighbor] ++;
                         }
                     }
                 }
+                #pragma omp critical
+                {
+                    next_frontier.insert(next_frontier_private.begin(), next_frontier_private.end());
+                }
             }
-            std::set<unsigned long long> s(next_frontier.begin(), next_frontier.end());
-            next_frontier.assign(s.begin(), s.end());
-            frontier = next_frontier;
+                
+            // std::unordered_set<unsigned long long> s(next_frontier.begin(), next_frontier.end());
+            // next_frontier.assign(s.begin(), s.end());
+            frontier = std::vector<unsigned long long>(next_frontier.begin(), next_frontier.end());
         }        
     
     }
@@ -92,14 +115,18 @@ void writeResult(const std::string &filename, const std::vector<unsigned long lo
     std::ofstream file(filename);
     file << "time:" << time << "s\n";
     file << "edges searched:" << edges << "\n";
-    file << "nodes searched:\n";
-    for (unsigned long long node : result) {
-        file << node << "\n";
-    }
+    // file << "nodes searched:\n";
+    // for (unsigned long long node : result) {
+    //     file << node << "\n";
+    // }
 }
+
+static int log_thread_num;
 
 int main() {
     Graph graph;
+    omp_set_num_threads(20);
+    log_thread_num = std::ceil(std::log(omp_get_thread_num()));
     std::cout << "which file to load\n";
     int index = 0;
     for(auto i = 0; i < num_files; i++) {
