@@ -35,7 +35,7 @@ Graph readGraph(const std::string &filename, Graph& graph, unsigned long long& m
 }
 
 // 广度优先搜索
-void bfs(const Graph &graph, unsigned long long &edges,unsigned long long &max_node_index, unsigned long long start, std::vector<unsigned long long>&result) {
+void bfs(const Graph &graph, unsigned long long &edges, unsigned long long &max_node_index, unsigned long long start, std::vector<unsigned long long>&result, std::vector<unsigned long long>&parent, std::vector<unsigned long long>&distance) {
 
     if(is_parallel == false)
     {
@@ -53,16 +53,10 @@ void bfs(const Graph &graph, unsigned long long &edges,unsigned long long &max_n
                 if (!visited[neighbor]) {
                     q.push(neighbor);
                     visited[neighbor] = 1;
+                    parent[neighbor] = node;
+                    distance[neighbor] = distance[node] + 1;
                 }
             }
-            // print queue
-            // std::queue<unsigned long long> tmp = q;
-            // while(!tmp.empty())
-            // {
-            //     std::cout << tmp.front() << " ";
-            //     tmp.pop();
-            // }
-            // std::cout << "\n";
         }        
     }
     else
@@ -72,7 +66,6 @@ void bfs(const Graph &graph, unsigned long long &edges,unsigned long long &max_n
         frontier.push_back(start);
         visited[start] = 1;
         while (!frontier.empty()) {
-            // std::vector<unsigned long long> next_frontier;
             std::unordered_set<unsigned long long> next_frontier;
             result.insert(result.end(), frontier.begin(), frontier.end());
 
@@ -91,6 +84,8 @@ void bfs(const Graph &graph, unsigned long long &edges,unsigned long long &max_n
                         {
                             next_frontier_private.push_back(neighbor);
                             visited[neighbor] ++;
+                            parent[neighbor] = node;
+                            distance[neighbor] = distance[node] + 1;
                         }
                     }
                 }
@@ -99,9 +94,6 @@ void bfs(const Graph &graph, unsigned long long &edges,unsigned long long &max_n
                     next_frontier.insert(next_frontier_private.begin(), next_frontier_private.end());
                 }
             }
-                
-            // std::unordered_set<unsigned long long> s(next_frontier.begin(), next_frontier.end());
-            // next_frontier.assign(s.begin(), s.end());
             frontier = std::vector<unsigned long long>(next_frontier.begin(), next_frontier.end());
         }        
     
@@ -111,53 +103,64 @@ void bfs(const Graph &graph, unsigned long long &edges,unsigned long long &max_n
 }
 
 // 将结果写入文件
-void writeResult(const std::string &filename, const std::vector<unsigned long long> &result, const unsigned long long &edges, double& time) {
+void writeResult(const std::string &filename, const std::vector<unsigned long long> &result, const unsigned long long &edges, double& time, const std::vector<unsigned long long> &parent, const std::vector<unsigned long long> &distance) {
     std::ofstream file(filename);
+    file << "number of nodes searched: " << result.size() << "\n";
     file << "time:" << time << "s\n";
-    file << "edges searched:" << edges << "\n";
-    // file << "nodes searched:\n";
-    // for (unsigned long long node : result) {
-    //     file << node << "\n";
-    // }
+    file << "number of edges searched:" << edges << "\n";
+    file << "nodes searched:\n";
+    for (unsigned long long i = 0; i < result.size(); i++) {
+        file << result[i] << "\t" << distance[result[i]] << "\t" << parent[result[i]] << "\n";
+    }
 }
 
 static int log_thread_num;
 
-int main() {
+int main(int argc, char **argv) {
     Graph graph;
     omp_set_num_threads(20);
-    log_thread_num = std::ceil(std::log(omp_get_thread_num()));
-    std::cout << "which file to load\n";
     int index = 0;
-    for(auto i = 0; i < num_files; i++) {
-        std::cout << i << ":" << file_name[i] << "\n";
-    }
-    std::cin >> index;
-    if(index >= num_files) {
-        std::cout << "invalid input\n";
-        return 0;
-    }
-
     std::vector<std::string> mode_name = {"sequencial", "parallel"};
 
-    std::cout << "which mode to use\n";
 
-    for(auto i = 0; i < 2; i++) {
-        std::cout << i << ":" << mode_name[i] << "\n";
+    if(argc < 2) 
+    {
+        std::cout << "which file to load\n";
+        for(auto i = 0; i < num_files; i++) {
+            std::cout << i << ":" << file_name[i] << "\n";
+        }
+        std::cin >> index;
+        if(index >= num_files) {
+            std::cout << "invalid input\n";
+            return 0;
+        }
+
+
+        std::cout << "which mode to use\n";
+
+        for(auto i = 0; i < 2; i++) {
+            std::cout << i << ":" << mode_name[i] << "\n";
+        }
+
+        std::cin >> is_parallel;
     }
-
-    std::cin >> is_parallel;
-
+    else
+    {
+        index = atoi(argv[1]);
+        is_parallel = (bool)atoi(argv[2]);
+    }
     unsigned long long num_edges = 0;
     unsigned long long max_node_index = 0;
     readGraph(file_name[index]+ ".txt" , graph, max_node_index);
     std::vector<unsigned long long> result;
+    std::vector<unsigned long long> parent(max_node_index+1, 0);
+    std::vector<unsigned long long> distance(max_node_index+1, 0);
     auto start = omp_get_wtime();
-    bfs(graph,num_edges, max_node_index, START_NODE, result);
+    bfs(graph,num_edges, max_node_index, START_NODE, result, parent, distance);
     auto end = omp_get_wtime();
     auto time = end - start;
     std::string result_file = "_res.txt";
     result_file = file_name[index] + "_" + mode_name[is_parallel] + result_file;
-    writeResult(result_file, result, num_edges, time);
+    writeResult(result_file, result, num_edges, time, parent, distance);
     return 0;
 }
