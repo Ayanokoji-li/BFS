@@ -68,16 +68,18 @@ Graph readGraph(std::string filename, Graph& graph, unsigned long long& max_node
     return graph;
 }
 
+
+
 // 广度优先搜索
 void bfs(const Graph &graph, unsigned long long &edges, unsigned long long &max_node_index, unsigned long long start, std::vector<unsigned long long>&result, std::vector<unsigned long long>&parent, std::vector<unsigned long long>&distance) {
     
     result.clear();
     if(is_parallel == false)
     {
-        std::vector<unsigned long long> visited(max_node_index, 0);
+        std::vector<bool> visited(max_node_index, 0);
         std::queue<unsigned long long> q;
         q.push(start);
-        visited[start] = 1;
+        visited[start] = true;
         while (!q.empty()) {
             unsigned long long node = q.front();
             q.pop();
@@ -96,7 +98,7 @@ void bfs(const Graph &graph, unsigned long long &edges, unsigned long long &max_
     }
     else
     {
-        std::vector<unsigned long long> visited(max_node_index, 0);
+        std::atomic<unsigned long long> visited[max_node_index];
         std::vector<unsigned long long> frontier;
         frontier.push_back(start);
         visited[start] = 1;
@@ -133,6 +135,10 @@ void bfs(const Graph &graph, unsigned long long &edges, unsigned long long &max_
         }        
     }
 }
+
+
+
+
 
 void bfs_benchmark(const Graph& graph, unsigned long long& num_edges, unsigned long long& max_node_index, std::vector<unsigned long long>& result, std::vector<unsigned long long>& parent, std::vector<unsigned long long>& distance, double &average_edge_performance, double &std_deviation, std::vector<double>& times, std::vector<unsigned long long>& searched_edges)
 {
