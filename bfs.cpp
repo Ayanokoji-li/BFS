@@ -25,21 +25,21 @@ bool is_parallel = false;
 bool is_benchmark = false;
 bool is_scalable = false;
 bool auto_threads = true;
-int thread_nums = 20;
+int thread_nums = omp_get_num_procs();
 unsigned long long edge_num = 0;
 
-#define FROM_DISK
+// #define FROM_DISK
 
 #define benchmark_Iteration 20
 #define FIRST_GAP 300000
-#define FIRST_GAP_THREAD 8
+#define FIRST_GAP_THREAD 16
 #define SECOND_GAP 2000000
-#define SECOND_GAP_THREAD 16
+#define SECOND_GAP_THREAD 18
 
 // 图的数据结构
 typedef std::vector<std::vector<unsigned long long>> Graph;
 
-unsigned long long random(unsigned long long up_bound, Graph graph);
+unsigned long long random(unsigned long long up_bound, const Graph &graph);
 
 // 从mtx文件中读取图
 Graph readGraph(std::string filename, Graph& graph, unsigned long long& max_node) 
@@ -71,7 +71,7 @@ Graph readGraph(std::string filename, Graph& graph, unsigned long long& max_node
 
 
 // 广度优先搜索
-void bfs(const Graph &graph, unsigned long long &edges, unsigned long long &max_node_index, unsigned long long start, std::vector<unsigned long long>&result, std::vector<unsigned long long>&parent, std::vector<unsigned long long>&distance) {
+void bfs(const Graph &graph, unsigned long long &max_node_index, unsigned long long start, std::vector<unsigned long long>&result, std::vector<unsigned long long>&parent, std::vector<unsigned long long>&distance) {
     
     result.clear();
     if(is_parallel == false)
@@ -86,7 +86,6 @@ void bfs(const Graph &graph, unsigned long long &edges, unsigned long long &max_
             result.push_back(node);
             if(graph[node].empty()) continue; // 有些节点没有出度
             for (unsigned long long neighbor : graph.at(node)) {
-                edges++;
                 if (!visited[neighbor]) {
                     q.push(neighbor);
                     visited[neighbor] = 1;
@@ -98,40 +97,63 @@ void bfs(const Graph &graph, unsigned long long &edges, unsigned long long &max_
     }
     else
     {
-        std::atomic<unsigned long long> visited[max_node_index];
+        std::vector<std::atomic<bool>> visited(max_node_index+1);
+        std::vector<bool> visited_share(max_node_index, 0);
         std::vector<unsigned long long> frontier;
         frontier.push_back(start);
-        visited[start] = 1;
+        visited[start] = true;
+        visited_share[start] = true;
         while (!frontier.empty()) {
-            std::unordered_set<unsigned long long> next_frontier;
             result.insert(result.end(), frontier.begin(), frontier.end());
-
-            #pragma omp parallel
+            std::vector<unsigned long long> find_node_sum(thread_nums + 1, 0);
+            auto copy = frontier;
+            frontier.clear();
+            #pragma omp parallel num_threads(thread_nums)
             {
+                auto tid = omp_get_thread_num();
                 std::vector<unsigned long long> next_frontier_private;
-                #pragma omp for reduction(+:edges) nowait
-                for(auto i = 0; i < frontier.size(); i++) 
+                #pragma omp for
+                for(auto i = 0; i < copy.size(); i++) 
                 {
-                    unsigned long long node = frontier[i];
+                    unsigned long long node = copy[i];
                     if(graph[node].empty()) continue; // 有些节点没有出度
-                    for (unsigned long long neighbor : graph.at(node)) 
+                    for (unsigned long long neighbor : graph[node]) 
                     {
-                        edges++;
-                        if (!visited[neighbor])
+                        bool tmp = false;
+                        if(visited_share[neighbor] == false)
                         {
-                            next_frontier_private.push_back(neighbor);
-                            visited[neighbor] ++;
-                            parent[neighbor] = node;
-                            distance[neighbor] = distance[node] + 1;
+                            if(visited[neighbor].compare_exchange_strong(tmp, true))
+                            {
+                                visited_share[neighbor] = true;
+                                next_frontier_private.push_back(neighbor);
+                                distance[neighbor] = distance[node] + 1;
+                                parent[neighbor] = node;
+                                find_node_sum[tid]++;
+                            }
                         }
                     }
                 }
 
-                #pragma omp critical
-                next_frontier.insert(next_frontier_private.begin(), next_frontier_private.end());
+                #pragma omp single
+                {
+                    unsigned long long all_sum = 0;
+                    for(int i = 0 ; i < thread_nums; i++)
+                    {
+                        unsigned long long tmp = find_node_sum[i];
+                        find_node_sum[i] = all_sum;
+                        all_sum += tmp;
+                    }
+                    find_node_sum[thread_nums] = all_sum;
+                    frontier.resize(all_sum);
+                }
+
+
+                for(unsigned long long j = find_node_sum[tid]; j < find_node_sum[tid+1]; j++)
+                {
+                    frontier[j] = next_frontier_private[j - find_node_sum[tid]];
+                }
 
             }
-            frontier = std::vector<unsigned long long>(next_frontier.begin(), next_frontier.end());
         }        
     }
 }
@@ -140,15 +162,18 @@ void bfs(const Graph &graph, unsigned long long &edges, unsigned long long &max_
 
 
 
-void bfs_benchmark(const Graph& graph, unsigned long long& num_edges, unsigned long long& max_node_index, std::vector<unsigned long long>& result, std::vector<unsigned long long>& parent, std::vector<unsigned long long>& distance, double &average_edge_performance, double &std_deviation, std::vector<double>& times, std::vector<unsigned long long>& searched_edges)
+void bfs_benchmark(const Graph& graph, unsigned long long& max_node_index, std::vector<unsigned long long>& result, std::vector<unsigned long long>& parent, std::vector<unsigned long long>& distance, double &average_edge_performance, double &std_deviation, std::vector<double>& times, std::vector<unsigned long long>& searched_edges)
 {
     unsigned long long start_node = 0;
     for(int i = 0; i < benchmark_Iteration; i ++)
     {
-        num_edges = 0;
         start_node = random(max_node_index, graph);
+        result.clear();
+        parent = std::vector<unsigned long long>(max_node_index+1, 0);
+        distance = std::vector<unsigned long long>(max_node_index+1, 0);
+
         auto start = omp_get_wtime();
-        bfs(graph,num_edges, max_node_index, START_NODE, result, parent, distance);
+        bfs(graph, max_node_index, start_node, result, parent, distance);
         auto end = omp_get_wtime();
         auto time = end - start;
         times.push_back(time);
@@ -176,12 +201,11 @@ void bfs_benchmark(const Graph& graph, unsigned long long& num_edges, unsigned l
 }
 
 // 将结果写入文件
-void writeNormalResult(const std::string &filename, const std::vector<unsigned long long> &result, const unsigned long long &edges, double& time, const std::vector<unsigned long long> &parent, const std::vector<unsigned long long> &distance) {
+void writeNormalResult(const std::string &filename, const std::vector<unsigned long long> &result, double& time, const std::vector<unsigned long long> &parent, const std::vector<unsigned long long> &distance) {
     std::ofstream file(filename);
     file << "BFS results and profile" << std::endl;
     file << "number of nodes searched: " << result.size() << "\n";
     file << "time:" << time << "s\n";
-    file << "number of edges searched:" << edges << "\n";
     file << "nodes searched:\n";
     for (unsigned long long i = 0; i < result.size(); i++) {
         file << result[i] << "\t" << distance[result[i]] << "\t" << parent[result[i]] << "\n";
@@ -307,7 +331,6 @@ int main(int argc, char **argv) {
         }
         file_name = default_file_names[file_index];
     }
-    unsigned long long num_edges = 0;
     unsigned long long max_node_index = 0;
 
     std::string tmp = file_name;
@@ -328,10 +351,12 @@ int main(int argc, char **argv) {
         if(max_node_index <= FIRST_GAP)
         {
             omp_set_num_threads(FIRST_GAP_THREAD);
+            thread_nums = FIRST_GAP_THREAD;
         }
         else if(max_node_index <= SECOND_GAP)
         {
             omp_set_num_threads(SECOND_GAP_THREAD);   
+            thread_nums = SECOND_GAP_THREAD;
         }
         else
         {
@@ -346,12 +371,12 @@ int main(int argc, char **argv) {
     if(is_benchmark == false)
     {
         auto start = omp_get_wtime();
-        bfs(graph,num_edges, max_node_index, START_NODE, result, parent, distance);
+        bfs(graph, max_node_index, START_NODE, result, parent, distance);
         auto end = omp_get_wtime();
         auto time = end - start;
         std::string result_file = "_res.txt";
         result_file = file_name + "_" + mode_name[is_parallel] + result_file;
-        writeNormalResult(result_file, result, num_edges, time, parent, distance);
+        writeNormalResult(result_file, result, time, parent, distance);
     }
     else if(is_scalable == false)
     {
@@ -360,7 +385,7 @@ int main(int argc, char **argv) {
         double average_edge_performance = 0;
         double std_deviation = 0;
 
-        bfs_benchmark(graph, num_edges, max_node_index, result, parent, distance, average_edge_performance, std_deviation, times, searched_edges);
+        bfs_benchmark(graph, max_node_index, result, parent, distance, average_edge_performance, std_deviation, times, searched_edges);
 
         std::string result_file = "_res.txt";
         result_file = file_name + "_" + mode_name[is_parallel] + "_benchmark" + result_file;
@@ -373,13 +398,14 @@ int main(int argc, char **argv) {
         std::vector<double> each_std_deviation;
         for(int i = THREAD_NUM_START; i <= max_threads; i += THREAD_NUM_STEP)
         {
+            thread_nums = i;
             omp_set_num_threads(i);
             std::vector<double> times;
             std::vector<unsigned long long>searched_edges;
             double average_edge_performance = 0;
             double std_deviation = 0;
 
-            bfs_benchmark(graph, num_edges, max_node_index, result, parent, distance, average_edge_performance, std_deviation, times, searched_edges);            
+            bfs_benchmark(graph, max_node_index, result, parent, distance, average_edge_performance, std_deviation, times, searched_edges);            
 
 
             each_average_edge_performance.push_back(average_edge_performance);
@@ -394,7 +420,7 @@ int main(int argc, char **argv) {
 }
 
 // output random number between 1 and up_bound
-unsigned long long random(unsigned long long up_bound, Graph graph)
+unsigned long long random(unsigned long long up_bound, const Graph &graph)
 {
     std::random_device rd;
     std::mt19937 gen(rd());
