@@ -3,3 +3,4 @@ bfs
 *.sh
 *.mtx
 *.py
+*.tar.gz

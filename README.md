@@ -13,6 +13,7 @@
 
 ## Benchmark
 >> &emsp;&emsp;Run algorithm for 20 times. Record the time before and after the function. Use the answer of finded node list to calculate each time real edge/s. Output avarage and standard deviation.
+>> &emsp;&emsp;When testing scalability, number of threads starts from 4 with step of 4 and ends with 20, which is the max number of threads cpu has.
 
 ## Compile
 >>g++ -foo.c -o foo -O3 -fopenmp
